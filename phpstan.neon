@@ -1,0 +1,14 @@
+includes:
+    - vendor/larastan/larastan/extension.neon
+
+parameters:
+    level: 5
+    paths:
+        - app
+        - routes
+        - database/seeders
+    tmpDir: storage/framework/cache/phpstan
+    # Read enum/date casts from the `casts()` method (Laravel 11+ style).
+    parseModelCastsMethod: true
+    # PHPDoc types are not enforced at runtime; keep defensive guards (e.g. Sanctum TransientToken in cookie mode).
+    treatPhpDocTypesAsCertain: false
