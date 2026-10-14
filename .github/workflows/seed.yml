@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: 'seed = add demo data (first run only); reset = WIPE the database, re-migrate and seed'
+        description: 'seed = add demo data (first run only); images = upload demo images to records without any; reset = WIPE the database, re-migrate and seed'
         type: choice
-        options: [seed, reset]
+        options: [seed, images, reset]
         default: seed
       confirm:
         description: 'Type SEED (or RESET for reset mode) to confirm'
@@ -93,9 +93,9 @@ jobs:
           composer install --no-interaction --no-progress --optimize-autoloader
           php artisan config:clear
 
-          if [ "$2" = reset ]; then
-            php artisan migrate:fresh --seed --force
-          else
-            php artisan db:seed --force
-          fi
+          case "$2" in
+            reset)  php artisan migrate:fresh --seed --force ;;
+            images) php artisan db:seed --class=DemoImageSeeder --force ;;
+            *)      php artisan db:seed --force ;;
+          esac
           EOF
