@@ -1,0 +1,101 @@
+name: Seed Demo Data
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'seed = add demo data (first run only); reset = WIPE the database, re-migrate and seed'
+        type: choice
+        options: [seed, reset]
+        default: seed
+      confirm:
+        description: 'Type SEED (or RESET for reset mode) to confirm'
+        type: string
+        required: true
+
+# Never overlap with a deployment.
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  seed:
+    name: Seed demo data
+    runs-on: ubuntu-latest
+    environment: production
+
+    env:
+      VPS_HOST: ${{ secrets.VPS_HOST }}
+      VPS_USER: ${{ secrets.VPS_USER }}
+      VPS_PORT: ${{ secrets.VPS_PORT || '22' }}
+      DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+      MODE: ${{ inputs.mode }}
+
+    steps:
+      - name: Check confirmation
+        env:
+          CONFIRM: ${{ inputs.confirm }}
+        run: |
+          EXPECTED=$([ "$MODE" = reset ] && echo RESET || echo SEED)
+          if [ "$CONFIRM" != "$EXPECTED" ]; then
+            echo "::error::Type $EXPECTED in the confirm box to run in '$MODE' mode."
+            exit 1
+          fi
+
+      - name: Configure SSH
+        env:
+          SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+          KNOWN_HOSTS: ${{ secrets.VPS_KNOWN_HOSTS }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+
+          if [ -n "$KNOWN_HOSTS" ]; then
+            printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
+          else
+            echo "::warning::VPS_KNOWN_HOSTS is not set; trusting the host key returned by ssh-keyscan."
+            ssh-keyscan -p "$VPS_PORT" -H "$VPS_HOST" > ~/.ssh/known_hosts
+          fi
+
+          cat > ~/.ssh/config <<EOF
+          Host vps
+            HostName $VPS_HOST
+            User $VPS_USER
+            Port $VPS_PORT
+            IdentityFile ~/.ssh/deploy_key
+            IdentitiesOnly yes
+            StrictHostKeyChecking yes
+          EOF
+
+      - name: Seed database
+        run: |
+          ssh vps bash -s -- "$DEPLOY_PATH" "$MODE" <<'EOF'
+          set -euo pipefail
+          cd "$1/current"
+
+          # Demo seeders are skipped when APP_ENV=production, and this job must never touch a live database.
+          if php artisan env | grep -q '\[production\]'; then
+            echo "APP_ENV is production - refusing to seed demo data. Set APP_ENV=staging in shared/.env for a test server." >&2
+            exit 1
+          fi
+
+          # Factories need Faker (a dev dependency); always restore the production install afterwards.
+          restore() {
+            composer install --no-dev --no-interaction --no-progress --optimize-autoloader
+            php artisan optimize
+          }
+          trap restore EXIT
+
+          composer install --no-interaction --no-progress --optimize-autoloader
+          php artisan config:clear
+
+          if [ "$2" = reset ]; then
+            php artisan migrate:fresh --seed --force
+          else
+            php artisan db:seed --force
+          fi
+          EOF
