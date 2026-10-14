@@ -77,21 +77,23 @@ jobs:
           set -euo pipefail
           cd "$1/current"
 
-          # Demo seeders are skipped when APP_ENV=production, and this job must never touch a live database.
-          if php artisan env | grep -q '\[production\]'; then
-            echo "APP_ENV is production - refusing to seed demo data. Set APP_ENV=staging in shared/.env for a test server." >&2
-            exit 1
-          fi
-
-          # Factories need Faker (a dev dependency); always restore the production install afterwards.
+          # Factories need Faker (a dev dependency) installed below; always restore the production install afterwards.
           restore() {
             composer install --no-dev --no-interaction --no-progress --optimize-autoloader
             php artisan optimize
           }
           trap restore EXIT
 
-          composer install --no-interaction --no-progress --optimize-autoloader
+          # Read the live .env, not the config cached at deploy time.
           php artisan config:clear
+
+          # Demo seeders are skipped when APP_ENV=production, and this job must never touch a live database.
+          if php artisan env | grep -q '\[production\]'; then
+            echo "APP_ENV is production - refusing to seed demo data. Set APP_ENV=staging in shared/.env for a test server." >&2
+            exit 1
+          fi
+
+          composer install --no-interaction --no-progress --optimize-autoloader
 
           case "$2" in
             reset)  php artisan migrate:fresh --seed --force ;;
