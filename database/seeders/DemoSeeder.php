@@ -10,7 +10,6 @@ use App\Enums\InvestmentStatus;
 use App\Enums\KycStatus;
 use App\Enums\ListingStatus;
 use App\Enums\ListingType;
-use App\Enums\MediaCollection;
 use App\Enums\OnboardingStep;
 use App\Enums\PayableType;
 use App\Enums\PaymentMethod;
@@ -32,29 +31,23 @@ use App\Models\Transaction;
 use App\Models\User;
 use App\Models\UserProfile;
 use App\Notifications\UserEvent;
-use App\Services\Media\CloudinaryService;
-use App\Services\Media\MediaService;
 use App\Support\Reference;
 use Carbon\CarbonImmutable;
 use Illuminate\Database\Seeder;
-use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Str;
-use Throwable;
 
 /**
  * Development/demo data mirroring the frontend mock accounts (handoff §1).
  * Never runs in production. Password for every demo account: SEED_PASSWORD (default Password123!).
- * Set SEED_UPLOAD_IMAGES=true with Cloudinary credentials to upload docs/images as real media.
+ * Set SEED_UPLOAD_IMAGES=true with Cloudinary credentials to upload docs/images as real media
+ * (or run `php artisan db:seed --class=DemoImageSeeder` later).
  */
 class DemoSeeder extends Seeder
 {
-    private array $images = [];
-
     public function run(): void
     {
         $password = Hash::make((string) config('amcom.seed.password'));
-        $this->prepareImages();
 
         // ------------------------------------------------------------------ accounts
         $this->account('superadmin@amcom.test', 'Sade', 'Adewale', 'super_admin', $password);
@@ -94,7 +87,6 @@ class DemoSeeder extends Seeder
                 'is_featured' => $i <= 6,
                 'features' => ['24/7 Security', 'Fitted kitchen', 'Ample parking'],
             ]);
-            $this->attachImage($property, MediaCollection::PropertyGallery, $property->title.' — exterior');
         }
 
         // ------------------------------------------------------------------ demo investor portfolio
@@ -114,7 +106,6 @@ class DemoSeeder extends Seeder
             'fee_paid_at' => now()->subDays(20), 'submitted_at' => now()->subDays(20), 'published_at' => now()->subDays(12),
             'amenities' => ['parking', 'security', 'cctv'],
         ]);
-        $this->attachImage($published, MediaCollection::ListingPhoto, 'Amara Heights, Unit 3C — living room');
         $published->documents()->create(['user_id' => $user->id, 'type' => DocumentType::TitleDocuments, 'name' => 'Title Documents', 'status' => DocumentStatus::PendingReview, 'disk' => 'documents']);
 
         $pending = Property::factory()->status(ListingStatus::PendingVerification)->create([
@@ -122,7 +113,6 @@ class DemoSeeder extends Seeder
             'property_type' => PropertyType::Duplex, 'price' => 180_000_000, 'bedrooms' => 4,
             'fee_paid_at' => now()->subDays(2), 'submitted_at' => now()->subDays(2),
         ]);
-        $this->attachImage($pending, MediaCollection::ListingPhoto, '4 Bed Duplex — front view');
 
         // ------------------------------------------------------------------ holdings
         $leased = Property::factory()->create(['title' => 'Oakwood Residences, Apt 4B', 'address' => 'Trans-Amadi, Port Harcourt', 'city' => 'Port Harcourt', 'state' => 'Rivers', 'listing_type' => ListingType::Lease, 'status' => ListingStatus::Rented]);
@@ -168,6 +158,14 @@ class DemoSeeder extends Seeder
         $user->notifyNow(new UserEvent('payment_successful', ['amount' => '₦8,500,000', 'description' => 'Capital investment — 12-month plan', 'reference' => 'PAY-DEMO', 'next_url' => '/dashboard/capital-investment']), ['database']);
         $user->notifyNow(new UserEvent('listing_approved', ['title' => $published->title, 'listing_id' => $published->id]), ['database']);
         $user->notifyNow(new UserEvent('login_alert', ['device' => 'Chrome on MacOS', 'ip_address' => '102.89.x.x', 'time' => now()->format('M j, Y g:i A')]), ['database']);
+
+        // Recent payments/sign-ups so the dashboard's default 30-day window has data.
+        $this->call(DemoRecentActivitySeeder::class);
+
+        // Real images need Cloudinary credentials (SEED_UPLOAD_IMAGES=true).
+        if (config('amcom.seed.upload_images')) {
+            $this->call(DemoImageSeeder::class);
+        }
 
         $this->command->info('Demo data seeded. Accounts: superadmin@amcom.test, admin@amcom.test, user@amcom.test, new@amcom.test');
     }
@@ -224,12 +222,6 @@ class DemoSeeder extends Seeder
             ]);
         }
 
-        if (! $estate->gallery()->exists()) {
-            foreach (['Aerial view', 'Entrance gate', 'Road network'] as $label) {
-                $this->attachImage($estate, MediaCollection::EstateGallery, "{$label} of {$name}");
-            }
-        }
-
         return $estate;
     }
 
@@ -275,41 +267,5 @@ class DemoSeeder extends Seeder
         $transaction->forceFill(['created_at' => $start, 'updated_at' => $start])->saveQuietly();
 
         return $investment;
-    }
-
-    /** Local files to upload when SEED_UPLOAD_IMAGES=true and Cloudinary is configured. */
-    private function prepareImages(): void
-    {
-        if (! config('amcom.seed.upload_images') || ! app(CloudinaryService::class)->isConfigured()) {
-            return;
-        }
-
-        foreach (['Aerial photo.png', 'Hero Image Container.png', 'CTA Image.png', 'Image Area.png', 'Image Area (1).png', 'Image.png'] as $file) {
-            if (is_file($path = base_path('docs/images/'.$file))) {
-                $this->images[] = $path;
-            }
-        }
-    }
-
-    /** Uploads one image per attachment (each Cloudinary asset backs exactly one media row). */
-    private function attachImage($owner, MediaCollection $collection, string $alt): void
-    {
-        if ($this->images === []) {
-            return; // no Cloudinary: cover_image/gallery stay empty in demo data
-        }
-
-        static $i = 0;
-        $path = $this->images[$i++ % count($this->images)];
-        $folder = match ($collection) {
-            MediaCollection::EstateGallery => 'estates/'.$owner->id,
-            MediaCollection::ListingPhoto => 'listings/'.$owner->id,
-            default => 'properties/'.$owner->id,
-        };
-
-        try {
-            app(MediaService::class)->upload(new UploadedFile($path, basename($path), 'image/png', null, true), $collection, app(MediaService::class)->folder($folder), $owner, null, $alt);
-        } catch (Throwable $e) {
-            $this->command->warn("Image upload skipped: {$e->getMessage()}");
-        }
     }
 }

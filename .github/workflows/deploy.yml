@@ -1,0 +1,89 @@
+name: Deploy AMCOM API - Production
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  test:
+    name: Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          extensions: mbstring, pdo_sqlite, sqlite3, gd, zip, intl, bcmath
+          coverage: none
+
+      - name: Cache Composer packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.composer/cache/files
+          key: composer-${{ hashFiles('composer.lock') }}
+          restore-keys: composer-
+
+      - name: Install dependencies
+        run: composer install --no-interaction --prefer-dist --no-progress
+
+      - name: Prepare environment
+        run: |
+          cp .env.example .env
+          php artisan key:generate
+
+      - name: Code style (Pint)
+        run: vendor/bin/pint --test
+
+      - name: Run tests
+        run: php artisan test
+
+  deploy:
+    name: Deploy to VPS
+    needs: test
+    runs-on: ubuntu-latest
+    environment: production
+
+    steps:
+      - name: Deploy over SSH
+        uses: appleboy/ssh-action@v1.2.0
+        env:
+          APP_PATH: ${{ secrets.VPS_APP_PATH }}
+          BRANCH: ${{ github.ref_name }}
+          PHP_FPM_SERVICE: ${{ vars.PHP_FPM_SERVICE || 'php8.3-fpm' }}
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          port: ${{ secrets.VPS_PORT || 22 }}
+          envs: APP_PATH,BRANCH,PHP_FPM_SERVICE
+          script_stop: true
+          script: |
+            set -euo pipefail
+            cd "$APP_PATH"
+
+            php artisan down --retry=15 || true
+            trap 'php artisan up' EXIT
+
+            git fetch origin "$BRANCH"
+            git reset --hard "origin/$BRANCH"
+
+            composer install --no-dev --no-interaction --prefer-dist --optimize-autoloader --no-progress
+
+            php artisan migrate --force
+            php artisan storage:link || true
+            php artisan optimize:clear
+            php artisan optimize
+
+            # Workers pick up the new code after their current job.
+            php artisan queue:restart
+
+            # Reset OPcache (requires passwordless sudo for this command).
+            sudo -n systemctl reload "$PHP_FPM_SERVICE" || echo "Skipping PHP-FPM reload"
