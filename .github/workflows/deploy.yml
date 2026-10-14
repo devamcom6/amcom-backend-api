@@ -9,6 +9,9 @@ concurrency:
   group: deploy-production
   cancel-in-progress: false
 
+permissions:
+  contents: read
+
 jobs:
   test:
     name: Tests
@@ -49,41 +52,147 @@ jobs:
     name: Deploy to VPS
     needs: test
     runs-on: ubuntu-latest
-    environment: production
+    environment:
+      name: production
+      url: ${{ vars.APP_URL }}
+
+    env:
+      VPS_HOST: ${{ secrets.VPS_HOST }}
+      VPS_USER: ${{ secrets.VPS_USER }}
+      VPS_PORT: ${{ secrets.VPS_PORT || '22' }}
+      DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+      APP_URL: ${{ vars.APP_URL }}
+      PHP_FPM_SERVICE: ${{ vars.PHP_FPM_SERVICE || 'php8.3-fpm' }}
+      RELEASE: ${{ github.sha }}
 
     steps:
-      - name: Deploy over SSH
-        uses: appleboy/ssh-action@v1.2.0
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure SSH
         env:
-          APP_PATH: ${{ secrets.VPS_APP_PATH }}
-          BRANCH: ${{ github.ref_name }}
-          PHP_FPM_SERVICE: ${{ vars.PHP_FPM_SERVICE || 'php8.3-fpm' }}
-        with:
-          host: ${{ secrets.VPS_HOST }}
-          username: ${{ secrets.VPS_USER }}
-          key: ${{ secrets.VPS_SSH_KEY }}
-          port: ${{ secrets.VPS_PORT || 22 }}
-          envs: APP_PATH,BRANCH,PHP_FPM_SERVICE
-          script_stop: true
-          script: |
-            set -euo pipefail
-            cd "$APP_PATH"
+          SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+          KNOWN_HOSTS: ${{ secrets.VPS_KNOWN_HOSTS }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
 
-            php artisan down --retry=15 || true
-            trap 'php artisan up' EXIT
+          if [ -n "$KNOWN_HOSTS" ]; then
+            printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
+          else
+            echo "::warning::VPS_KNOWN_HOSTS is not set; trusting the host key returned by ssh-keyscan."
+            ssh-keyscan -p "$VPS_PORT" -H "$VPS_HOST" > ~/.ssh/known_hosts
+          fi
 
-            git fetch origin "$BRANCH"
-            git reset --hard "origin/$BRANCH"
+          cat > ~/.ssh/config <<EOF
+          Host vps
+            HostName $VPS_HOST
+            User $VPS_USER
+            Port $VPS_PORT
+            IdentityFile ~/.ssh/deploy_key
+            IdentitiesOnly yes
+            StrictHostKeyChecking yes
+          EOF
 
-            composer install --no-dev --no-interaction --prefer-dist --optimize-autoloader --no-progress
+      - name: Record current release
+        run: |
+          PREVIOUS=$(ssh vps "readlink -f '$DEPLOY_PATH/current' 2>/dev/null || true")
+          echo "PREVIOUS_RELEASE=$PREVIOUS" >> "$GITHUB_ENV"
+          echo "Previous release: ${PREVIOUS:-none}"
 
-            php artisan migrate --force
-            php artisan storage:link || true
-            php artisan optimize:clear
-            php artisan optimize
+      - name: Upload release
+        run: |
+          ssh vps "mkdir -p '$DEPLOY_PATH/releases/$RELEASE'"
+          rsync -az --delete \
+            --exclude='/.git' \
+            --exclude='/.github' \
+            --exclude='/.env' \
+            --exclude='/vendor' \
+            --exclude='/node_modules' \
+            --exclude='/storage' \
+            --exclude='/public/storage' \
+            --exclude='/tests' \
+            --exclude='/.phpunit.result.cache' \
+            ./ "vps:$DEPLOY_PATH/releases/$RELEASE/"
 
-            # Workers pick up the new code after their current job.
-            php artisan queue:restart
+      - name: Build release
+        run: |
+          ssh vps bash -s -- "$DEPLOY_PATH" "$RELEASE" <<'EOF'
+          set -euo pipefail
+          DEPLOY_PATH=$1
+          RELEASE_PATH="$DEPLOY_PATH/releases/$2"
+          SHARED="$DEPLOY_PATH/shared"
 
-            # Reset OPcache (requires passwordless sudo for this command).
-            sudo -n systemctl reload "$PHP_FPM_SERVICE" || echo "Skipping PHP-FPM reload"
+          if [ ! -f "$SHARED/.env" ]; then
+            echo "Missing $SHARED/.env - create it before the first deploy." >&2
+            exit 1
+          fi
+
+          # Persistent storage shared by every release
+          mkdir -p "$SHARED/storage/app/public" \
+                   "$SHARED/storage/framework/cache/data" \
+                   "$SHARED/storage/framework/sessions" \
+                   "$SHARED/storage/framework/views" \
+                   "$SHARED/storage/logs"
+
+          cd "$RELEASE_PATH"
+          ln -sfn "$SHARED/.env" .env
+          rm -rf storage
+          ln -sfn "$SHARED/storage" storage
+          mkdir -p bootstrap/cache
+          chmod -R 775 bootstrap/cache
+
+          composer install --no-dev --prefer-dist --no-interaction --no-progress --optimize-autoloader
+
+          php artisan migrate --force
+          php artisan storage:link || true
+
+          # Fresh release has no cached files, so build them without clearing the shared cache store.
+          php artisan optimize
+          EOF
+
+      - name: Activate release
+        run: |
+          ssh vps bash -s -- "$DEPLOY_PATH" "$RELEASE" "$PHP_FPM_SERVICE" <<'EOF'
+          set -euo pipefail
+          DEPLOY_PATH=$1
+          RELEASE_PATH="$DEPLOY_PATH/releases/$2"
+
+          ln -sfn "$RELEASE_PATH" "$DEPLOY_PATH/current.tmp"
+          mv -Tf "$DEPLOY_PATH/current.tmp" "$DEPLOY_PATH/current"
+
+          # Reset OPcache / realpath cache so PHP-FPM serves the new release.
+          sudo -n systemctl reload "$3" || echo "Skipping PHP-FPM reload"
+
+          # Workers pick up the new code after their current job.
+          php "$DEPLOY_PATH/current/artisan" queue:restart
+          EOF
+          echo "ACTIVATED=true" >> "$GITHUB_ENV"
+
+      - name: Health check
+        run: |
+          curl --fail --silent --show-error \
+            --retry 5 --retry-delay 3 --retry-all-errors \
+            "${APP_URL%/}/up"
+
+      - name: Remove old releases
+        run: |
+          ssh vps bash -s -- "$DEPLOY_PATH" <<'EOF'
+          set -euo pipefail
+          cd "$1/releases"
+          CURRENT=$(basename "$(readlink -f "$1/current")")
+          ls -1t | { grep -vx "$CURRENT" || true; } | tail -n +5 | xargs -r rm -rf
+          EOF
+
+      - name: Roll back on failure
+        if: failure() && env.ACTIVATED == 'true' && env.PREVIOUS_RELEASE != ''
+        run: |
+          echo "::error::Deployment failed after activation; rolling back to $PREVIOUS_RELEASE"
+          ssh vps bash -s -- "$DEPLOY_PATH" "$PREVIOUS_RELEASE" "$PHP_FPM_SERVICE" <<'EOF'
+          set -euo pipefail
+          ln -sfn "$2" "$1/current.tmp"
+          mv -Tf "$1/current.tmp" "$1/current"
+          sudo -n systemctl reload "$3" || echo "Skipping PHP-FPM reload"
+          php "$1/current/artisan" queue:restart
+          EOF
