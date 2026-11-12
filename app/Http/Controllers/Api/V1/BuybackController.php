@@ -53,6 +53,7 @@ class BuybackController extends Controller
             $estate,
             array_map('intval', $request->validated('plot_ids')),
             (int) $request->validated('tenure_months'),
+            $request->validated(),
         );
 
         return ApiResponse::created(new InvestmentOrderResource($order), 'Order created. Your plots are reserved for 30 minutes.');

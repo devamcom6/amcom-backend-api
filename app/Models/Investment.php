@@ -23,6 +23,7 @@ class Investment extends Model
         'product', 'reference', 'status', 'estate_id', 'principal', 'tenure_months', 'roi_percent',
         'projected_return', 'started_at', 'maturity_date', 'agreement_signed_at', 'reservation_expires_at',
         'payout_requested_at', 'paid_out_at', 'cancelled_at', 'reinvested_from_id',
+        'referrer_name', 'referrer_phone', 'referrer_user_id',
     ];
 
     protected function casts(): array
@@ -48,6 +49,12 @@ class Investment extends Model
     public function user(): BelongsTo
     {
         return $this->belongsTo(User::class);
+    }
+
+    /** @return BelongsTo<User, $this> the existing account the referrer phone matched */
+    public function referrer(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'referrer_user_id');
     }
 
     /** @return BelongsTo<Estate, $this> */

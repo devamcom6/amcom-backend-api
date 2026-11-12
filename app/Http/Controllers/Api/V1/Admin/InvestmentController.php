@@ -22,7 +22,7 @@ class InvestmentController extends Controller
         $list = ListQuery::from($request);
 
         $query = Investment::query()
-            ->with(['user', 'estate', 'plots'])
+            ->with(['user', 'estate', 'plots', 'referrer'])
             ->when($list->filter('product', Product::values()), fn ($q, $v) => $q->whereIn('product', $v))
             ->when($list->filter('status', InvestmentStatus::values()), fn ($q, $v) => $q->whereIn('status', $v))
             ->when($list->search(), fn ($q, $term) => $q->where(fn ($w) => $w

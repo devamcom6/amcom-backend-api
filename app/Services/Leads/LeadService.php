@@ -16,6 +16,7 @@ use App\Models\User;
 use App\Services\Investments\BuybackService;
 use App\Services\Investments\CapitalService;
 use App\Services\Notifier;
+use App\Services\Referrals\ReferrerResolver;
 use App\Support\Format;
 use App\Support\IcsCalendar;
 use App\Support\Reference;
@@ -34,6 +35,7 @@ class LeadService
         private readonly BuybackService $buyback,
         private readonly CapitalService $capital,
         private readonly Notifier $notifier,
+        private readonly ReferrerResolver $referrers,
     ) {}
 
     public function buybackInterest(array $data, ?User $user): ServiceRequest
@@ -75,6 +77,7 @@ class LeadService
         $this->notifier->ops('new_lead', 'New buyback interest: '.$estate->name, [
             'reference' => $request->reference, 'name' => $request->name, 'email' => $request->email,
             'phone' => $request->phone, 'selection' => $summary, 'note' => $request->message,
+            'referrer' => $this->referrerLine($request),
         ], '/admin/requests?kind[]=interest');
 
         return $request;
@@ -100,6 +103,7 @@ class LeadService
         $this->notifier->ops('new_lead', 'New capital investment interest', [
             'reference' => $request->reference, 'name' => $request->name, 'email' => $request->email,
             'phone' => $request->phone, 'selection' => $summary, 'note' => $request->message,
+            'referrer' => $this->referrerLine($request),
         ], '/admin/requests?kind[]=interest');
 
         return $request;
@@ -123,6 +127,7 @@ class LeadService
 
         $this->notifier->ops('new_application', 'New application: '.$property->title, [
             'reference' => $request->reference, 'name' => $request->name, 'email' => $request->email, 'phone' => $request->phone,
+            'referrer' => $this->referrerLine($request),
         ], '/admin/requests?kind[]=application');
 
         return $request;
@@ -278,6 +283,20 @@ class LeadService
         return $request;
     }
 
+    /** "Name · phone" for internal alerts, or null when no referrer was given (OpsAlert skips nulls). */
+    private function referrerLine(ServiceRequest $request): ?string
+    {
+        $parts = array_filter([$request->referrer_name, $request->referrer_phone], fn ($v) => $v !== null && $v !== '');
+
+        if ($parts === []) {
+            return null;
+        }
+
+        $account = $request->referrer_user_id ? ' (existing customer #'.$request->referrer_user_id.')' : '';
+
+        return implode(' · ', $parts).$account;
+    }
+
     private function store(RequestKind $kind, string $prefix, array $data, ?User $user, array $attributes, ?Model $subject = null): ServiceRequest
     {
         return DB::transaction(function () use ($kind, $prefix, $data, $user, $attributes, $subject) {
@@ -290,7 +309,7 @@ class LeadService
                 'phone' => $data['phone'] ?? null,
                 'alt_phone' => $data['alt_phone'] ?? null,
                 'status' => RequestStatus::New,
-            ]);
+            ] + $this->referrers->attributes($data, $user));
 
             if ($subject !== null) {
                 $request->subject()->associate($subject);

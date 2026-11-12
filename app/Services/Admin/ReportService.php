@@ -5,11 +5,15 @@ namespace App\Services\Admin;
 use App\Enums\ListingStatus;
 use App\Enums\Product;
 use App\Enums\ReportType;
+use App\Enums\RequestKind;
 use App\Models\Investment;
 use App\Models\Property;
+use App\Models\ServiceRequest;
 use App\Models\Transaction;
 use App\Models\User;
+use App\Services\Referrals\ReferrerResolver;
 use Carbon\CarbonImmutable;
+use Illuminate\Support\Collection;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 
 /** Admin reports (contract §15.10) and their CSV export. */
@@ -24,6 +28,10 @@ class ReportService
         $days = (int) $start->diffInDays($end) + 1;
         $prevStart = $start->subDays($days);
         $prevEnd = $start->subSecond();
+
+        if ($type === ReportType::Referrals) {
+            return $this->referrals($from, $to, $groupBy, $start, $end, $prevStart, $prevEnd);
+        }
 
         [$rows, $previousRows, $dateColumn, $aggregate, $valueLabel, $format, $totalLabel, $extraTotals] = match ($type) {
             ReportType::Revenue => [
@@ -84,6 +92,77 @@ class ReportService
                 'value' => $point['value'],
                 'share' => $total > 0 ? round($point['value'] / $total * 100, 1).'%' : '0%',
             ], $series),
+        ];
+    }
+
+    /**
+     * Referred interests, applications and investments: totals plus one row per referrer (linked
+     * account, else phone, else name) for crediting referrals. No series: the UI shows no chart.
+     */
+    private function referrals(
+        CarbonImmutable $from, CarbonImmutable $to, string $groupBy,
+        CarbonImmutable $start, CarbonImmutable $end, CarbonImmutable $prevStart, CarbonImmutable $prevEnd,
+    ): array {
+        $leads = fn ($a, $b) => ServiceRequest::query()->with('referrer')
+            ->whereIn('kind', [RequestKind::Interest, RequestKind::Application])
+            ->where(fn ($q) => $q->whereNotNull('referrer_name')->orWhereNotNull('referrer_phone'))
+            ->whereBetween('created_at', [$a, $b])->get();
+        $investments = fn ($a, $b) => Investment::query()->with('referrer')
+            ->where(fn ($q) => $q->whereNotNull('referrer_name')->orWhereNotNull('referrer_phone'))
+            ->whereBetween('created_at', [$a, $b])->get();
+
+        $leadRows = $leads($start, $end);
+        $investmentRows = $investments($start, $end);
+        $all = $leadRows->concat($investmentRows);
+        $total = $all->count();
+        $previous = $leads($prevStart, $prevEnd)->count() + $investments($prevStart, $prevEnd)->count();
+        $invested = fn (Collection $rows) => (int) $rows->whereNotNull('started_at')->sum('principal');
+
+        $referrers = $all
+            ->groupBy(fn ($r) => $r->referrer_user_id
+                ? 'user:'.$r->referrer_user_id
+                : ($r->referrer_phone ? 'phone:'.ReferrerResolver::variants($r->referrer_phone)[0] : 'name:'.mb_strtolower(trim($r->referrer_name))))
+            ->map(function (Collection $rows) use ($invested) {
+                $first = $rows->first(fn ($r) => $r->referrer !== null) ?? $rows->first();
+                $made = $rows->filter(fn ($r) => $r instanceof Investment);
+
+                return [
+                    'referrer' => $rows->pluck('referrer_name')->filter()->first() ?? '—',
+                    'phone' => $rows->pluck('referrer_phone')->filter()->first() ?? '',
+                    'referrer_user' => $first->referrer?->displayName(),
+                    'referrer_user_id' => $first->referrer?->id, // not a column: lets the UI link the name
+
+                    'leads' => $rows->count() - $made->count(),
+                    'investments' => $made->count(),
+                    'value' => $invested($made),
+                ];
+            })
+            ->sortByDesc(fn ($r) => [$r['value'], $r['leads'] + $r['investments']])
+            ->values()
+            ->all();
+
+        return [
+            'type' => ReportType::Referrals->value,
+            'range' => ['from' => $start->toDateString(), 'to' => $to->toDateString()],
+            'group_by' => $groupBy,
+            'totals' => [
+                ['label' => 'Referred submissions', 'value' => $total, 'format' => 'number'],
+                ['label' => 'Change vs previous', 'value' => $this->change($total, $previous), 'format' => 'percent'],
+                ['label' => 'Referred leads', 'value' => $leadRows->count(), 'format' => 'number'],
+                ['label' => 'Referred investments', 'value' => $investmentRows->count(), 'format' => 'number'],
+                ['label' => 'Amount invested via referrals', 'value' => $invested($investmentRows), 'format' => 'currency'],
+                ['label' => 'Referrers', 'value' => count($referrers), 'format' => 'number'],
+            ],
+            'series' => [], // no trend chart for referrals; the UI hides it when empty
+            'columns' => [
+                ['key' => 'referrer', 'label' => 'Referrer'],
+                ['key' => 'phone', 'label' => 'Referrer phone'],
+                ['key' => 'referrer_user', 'label' => 'Linked account'],
+                ['key' => 'leads', 'label' => 'Interests & applications', 'format' => 'number'],
+                ['key' => 'investments', 'label' => 'Investments', 'format' => 'number'],
+                ['key' => 'value', 'label' => 'Amount invested', 'format' => 'currency'],
+            ],
+            'rows' => $referrers,
         ];
     }
 

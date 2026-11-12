@@ -6,6 +6,7 @@ use App\Http\Middleware\EnsureAccountIsActive;
 use App\Http\Middleware\EnsureEmailIsVerified;
 use App\Http\Middleware\EnsureUserIsStaff;
 use App\Http\Middleware\ForceJsonResponse;
+use App\Http\Middleware\NormalizePhoneNumbers;
 use App\Http\Middleware\RequirePermission;
 use App\Support\ApiResponse;
 use Illuminate\Auth\Access\AuthorizationException;
@@ -38,6 +39,7 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->trustProxies(at: env('TRUSTED_PROXIES', '127.0.0.1'));
 
         $middleware->api(prepend: [ForceJsonResponse::class], append: [CheckMaintenanceMode::class]);
+        $middleware->append(NormalizePhoneNumbers::class);
 
         $middleware->alias([
             'active' => EnsureAccountIsActive::class,

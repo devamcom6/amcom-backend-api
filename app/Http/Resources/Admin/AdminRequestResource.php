@@ -2,6 +2,7 @@
 
 namespace App\Http\Resources\Admin;
 
+use App\Enums\RequestKind;
 use App\Models\ServiceRequest;
 use App\Support\Format;
 use Illuminate\Http\Request;
@@ -19,6 +20,9 @@ class AdminRequestResource extends JsonResource
             'name' => $this->name,
             'email' => $this->email,
             'phone' => $this->phone,
+            'referrer_name' => $this->hasReferrer() ? $this->referrer_name : null,
+            'referrer_phone' => $this->hasReferrer() ? $this->referrer_phone : null,
+            'referrer_user' => $this->hasReferrer() && $this->referrer ? ['id' => $this->referrer->id, 'name' => $this->referrer->displayName()] : null,
             'subject' => $this->subject_line,
             'message' => $this->message,
             'product' => $this->product?->value,
@@ -28,5 +32,11 @@ class AdminRequestResource extends JsonResource
             'scheduled_for' => Format::iso($this->scheduled_for),
             'created_at' => Format::iso($this->created_at),
         ];
+    }
+
+    /** Referrer fields are only collected on interest and application forms. */
+    private function hasReferrer(): bool
+    {
+        return in_array($this->kind, [RequestKind::Interest, RequestKind::Application], true);
     }
 }

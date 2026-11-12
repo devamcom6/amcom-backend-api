@@ -14,21 +14,26 @@ use App\Models\Investment;
 use App\Models\Plot;
 use App\Models\Transaction;
 use App\Models\User;
+use App\Services\Referrals\ReferrerResolver;
 use App\Support\Reference;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
 class BuybackService
 {
-    public function __construct(private readonly QuoteCalculator $quotes) {}
+    public function __construct(
+        private readonly QuoteCalculator $quotes,
+        private readonly ReferrerResolver $referrers,
+    ) {}
 
     /**
      * Creates a direct-mode order: computes the authoritative quote and reserves the plots
      * (row locks prevent two customers reserving the same plot).
      *
      * @param  list<int>  $plotIds
+     * @param  array  $input  validated request input; only the referrer fields are read
      */
-    public function createOrder(User $user, Estate $estate, array $plotIds, int $tenureMonths): Investment
+    public function createOrder(User $user, Estate $estate, array $plotIds, int $tenureMonths, array $input = []): Investment
     {
         if ($estate->checkout_mode === CheckoutMode::Interest) {
             throw new ApiException(
@@ -41,7 +46,9 @@ class BuybackService
         $estate->loadMissing('tenures');
         $tenure = $this->assertSelection($estate, $plotIds, $tenureMonths);
 
-        return DB::transaction(function () use ($user, $estate, $plotIds, $tenure) {
+        $referrer = $this->referrers->attributes($input, $user);
+
+        return DB::transaction(function () use ($user, $estate, $plotIds, $tenure, $referrer) {
             $plots = Plot::query()
                 ->where('estate_id', $estate->id)
                 ->whereIn('id', $plotIds)
@@ -69,6 +76,7 @@ class BuybackService
                 'roi_percent' => $tenure->roi_percent,
                 'projected_return' => $quote['projected_return'],
                 'maturity_date' => $quote['maturity_date'],
+                ...$referrer,
                 'reservation_expires_at' => $expiresAt,
             ]);
             $user->investments()->save($investment);

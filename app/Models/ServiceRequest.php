@@ -14,6 +14,7 @@ class ServiceRequest extends Model
 {
     protected $fillable = [
         'kind', 'reference', 'user_id', 'product', 'name', 'email', 'phone', 'alt_phone',
+        'referrer_name', 'referrer_phone', 'referrer_user_id',
         'subject_line', 'message', 'meta', 'status', 'scheduled_for', 'assigned_to',
     ];
 
@@ -38,6 +39,12 @@ class ServiceRequest extends Model
     public function user(): BelongsTo
     {
         return $this->belongsTo(User::class);
+    }
+
+    /** @return BelongsTo<User, $this> the existing account the referrer phone matched */
+    public function referrer(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'referrer_user_id');
     }
 
     /** @return BelongsTo<User, $this> */

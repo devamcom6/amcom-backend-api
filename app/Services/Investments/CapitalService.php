@@ -11,6 +11,7 @@ use App\Models\User;
 use App\Services\AuditLogger;
 use App\Services\Documents\DocumentService;
 use App\Services\Notifier;
+use App\Services\Referrals\ReferrerResolver;
 use App\Services\SettingsService;
 use App\Support\Format;
 use App\Support\Reference;
@@ -24,6 +25,7 @@ class CapitalService
         private readonly DocumentService $documents,
         private readonly Notifier $notifier,
         private readonly AuditLogger $audit,
+        private readonly ReferrerResolver $referrers,
     ) {}
 
     /** Public plan configuration (contract §7.1). */
@@ -64,7 +66,8 @@ class CapitalService
         }
     }
 
-    public function createInvestment(User $user, int $amount, int $tenureMonths): Investment
+    /** @param  array  $input  validated request input; only the referrer fields are read */
+    public function createInvestment(User $user, int $amount, int $tenureMonths, array $input = []): Investment
     {
         if ($this->plan()['checkout_mode'] === 'interest') {
             throw new ApiException('Capital investments are currently handled by our team. Please submit your interest instead.', 'checkout_mode_interest', 422);
@@ -74,7 +77,9 @@ class CapitalService
         $roi = $this->roiFor($tenureMonths);
         $quote = $this->quotes->quote($amount, $tenureMonths, $roi);
 
-        return DB::transaction(function () use ($user, $amount, $tenureMonths, $roi, $quote) {
+        $referrer = $this->referrers->attributes($input, $user);
+
+        return DB::transaction(function () use ($user, $amount, $tenureMonths, $roi, $quote, $referrer) {
             $investment = new Investment([
                 'product' => Product::CapitalInvestment,
                 'reference' => Reference::temporary(),
@@ -84,6 +89,7 @@ class CapitalService
                 'roi_percent' => $roi,
                 'projected_return' => $quote['projected_return'],
                 'maturity_date' => $quote['maturity_date'],
+                ...$referrer,
             ]);
             $user->investments()->save($investment);
             $investment->forceFill(['reference' => Reference::yearly('CI', $investment->id)])->save();

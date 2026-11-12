@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\V1;
 use App\Enums\Product;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Capital\CapitalInterestRequest;
+use App\Http\Requests\Rules;
 use App\Http\Requests\SignAgreementRequest;
 use App\Http\Resources\InvestmentOrderResource;
 use App\Models\Investment;
@@ -44,12 +45,12 @@ class CapitalController extends Controller
 
     public function store(Request $request): JsonResponse
     {
-        $validated = $request->validate([
+        $validated = $request->validate(Rules::referrer() + [
             'amount' => ['required', 'integer', 'min:1'],
             'tenure_months' => ['required', 'integer', 'min:1', 'max:120'],
         ]);
 
-        $investment = $this->capital->createInvestment($request->user(), (int) $validated['amount'], (int) $validated['tenure_months']);
+        $investment = $this->capital->createInvestment($request->user(), (int) $validated['amount'], (int) $validated['tenure_months'], $validated);
 
         return ApiResponse::created(new InvestmentOrderResource($investment), 'Investment created.');
     }

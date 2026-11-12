@@ -10,4 +10,5 @@ enum ReportType: string
     case Investments = 'investments';
     case Users = 'users';
     case Listings = 'listings';
+    case Referrals = 'referrals';
 }

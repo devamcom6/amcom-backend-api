@@ -9,7 +9,7 @@ class ApplicationRequest extends FormRequest
 {
     public function rules(): array
     {
-        return [
+        return Rules::referrer() + [
             'full_name' => ['required', 'string', 'min:3', 'max:150'],
             'email' => ['required', 'string', 'email', 'max:255'],
             'phone' => Rules::phone(),

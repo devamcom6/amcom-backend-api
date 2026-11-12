@@ -22,7 +22,7 @@ class RequestController extends Controller
         $list = ListQuery::from($request);
 
         $query = ServiceRequest::query()
-            ->with('assignee')
+            ->with(['assignee', 'referrer'])
             ->when($list->filter('kind', RequestKind::values()), fn ($q, $v) => $q->whereIn('kind', $v))
             ->when($list->filter('status', RequestStatus::values()), fn ($q, $v) => $q->whereIn('status', $v))
             ->when($list->search(), fn ($q, $term) => $q->where(fn ($w) => $w
@@ -65,6 +65,6 @@ class RequestController extends Controller
             'assigned_to' => $serviceRequest->assigned_to,
         ], 'updated request');
 
-        return ApiResponse::success(new AdminRequestResource($serviceRequest->load('assignee')), 'Request updated.');
+        return ApiResponse::success(new AdminRequestResource($serviceRequest->load(['assignee', 'referrer'])), 'Request updated.');
     }
 }

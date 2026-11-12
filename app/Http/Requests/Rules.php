@@ -7,12 +7,25 @@ use Illuminate\Validation\Rules\Password;
 /** Shared validation rules. */
 final class Rules
 {
-    /** E.164 (+2348031234567) or local Nigerian format (08031234567). */
-    public const PHONE_REGEX = '/^(\+[1-9]\d{7,14}|0[789][01]\d{8})$/';
+    /**
+     * Mirrors the frontend check (input is already stripped of spaces, brackets and dashes by
+     * NormalizePhoneNumbers): a Nigerian mobile as 08031234567, 8031234567, 2348031234567 or
+     * +2348031234567, or any international number of 10–15 digits with an optional +.
+     */
+    public const PHONE_REGEX = '/^((\+?234|0)?[789][01]\d{8}|\+?\d{10,15})$/';
 
     public static function phone(bool $required = true): array
     {
         return [$required ? 'required' : 'nullable', 'string', 'max:20', 'regex:'.self::PHONE_REGEX];
+    }
+
+    /** Optional "who referred you" fields shared by interest and application forms. */
+    public static function referrer(): array
+    {
+        return [
+            'referrer_name' => ['nullable', 'string', 'max:120'],
+            'referrer_phone' => self::phone(false),
+        ];
     }
 
     public static function password(): array

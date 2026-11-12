@@ -9,7 +9,7 @@ class CapitalInterestRequest extends FormRequest
 {
     public function rules(): array
     {
-        return [
+        return Rules::referrer() + [
             'amount' => ['required', 'integer', 'min:1'],
             'tenure_months' => ['required', 'integer', 'min:1', 'max:120'],
             'full_name' => ['required', 'string', 'min:3', 'max:150'],
