@@ -21,6 +21,12 @@ return [
         'brand' => env('APP_NAME', 'Amcom'),
     ],
 
+    // Documents users must accept. Bump the URL when a new version is published: each acceptance
+    // records the URL it was given, so older acceptances stay traceable to their version.
+    'legal' => [
+        'buyer_terms_url' => env('BUYER_TERMS_URL', 'https://res.cloudinary.com/prl3lpkk/raw/upload/v1794506071/TERMS_AND_CONDITIONS_FOR_BUYERS_UNDER_PROPERTY_LISITNG.docx'),
+    ],
+
     // Primary frontend URL (links in emails, OAuth redirect) and the full allow-list (CORS, payment callbacks).
     'frontend_url' => rtrim((string) env('FRONTEND_URL', 'http://localhost:5173'), '/'),
     'frontend_urls' => array_map(fn ($u) => rtrim($u, '/'), $frontendUrls),

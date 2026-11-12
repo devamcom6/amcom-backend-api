@@ -51,6 +51,7 @@ class PublicApiTest extends TestCase
 
         $this->postJson("/api/v1/properties/{$property->slug}/applications", [
             'full_name' => 'Ada Lovelace', 'email' => 'ada@example.com', 'phone' => '+2348031234567', 'message' => 'I would like to buy this.',
+            'accept_terms' => true,
         ])->assertCreated()->assertJsonPath('data.status', 'received')->assertJsonPath('data.property_title', $property->title);
 
         Notification::assertSentTo($owner, UserEvent::class, fn ($n) => $n->event === 'new_inquiry');
@@ -108,6 +109,29 @@ class PublicApiTest extends TestCase
         $this->assertSame(774, collect($lookups['states'])->sum(fn ($s) => count($s['lgas'])));
         $this->assertNotEmpty($lookups['banks']);
         $this->assertSame('nin', $lookups['id_types'][0]['value']);
+        $this->assertSame(config('amcom.legal.buyer_terms_url'), $lookups['legal']['buyer_terms_url']);
+        $this->assertStringEndsWith('.docx', $lookups['legal']['buyer_terms_url']);
+    }
+
+    public function test_application_requires_terms_acceptance_and_records_it(): void
+    {
+        Notification::fake();
+        $property = Property::factory()->create();
+        $body = ['full_name' => 'Ada Lovelace', 'email' => 'ada@example.com', 'phone' => '+2348031234567', 'message' => 'I would like to buy this.'];
+        $error = 'Please confirm you have read and understood the Terms and Conditions.';
+
+        $this->postJson("/api/v1/properties/{$property->slug}/applications", $body)
+            ->assertStatus(422)->assertJsonPath('errors.accept_terms.0', $error);
+        $this->postJson("/api/v1/properties/{$property->slug}/applications", $body + ['accept_terms' => false])
+            ->assertStatus(422)->assertJsonPath('errors.accept_terms.0', $error);
+        $this->assertSame(0, ServiceRequest::count());
+
+        $this->postJson("/api/v1/properties/{$property->slug}/applications", $body + ['accept_terms' => true])->assertCreated();
+
+        $terms = ServiceRequest::sole()->meta['terms'];
+        $this->assertSame(config('amcom.legal.buyer_terms_url'), $terms['url']);
+        $this->assertNotEmpty($terms['accepted_at']);
+        $this->assertSame('127.0.0.1', $terms['ip_address']);
     }
 
     public function test_errors_never_leak_internals(): void

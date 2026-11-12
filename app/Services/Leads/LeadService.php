@@ -114,7 +114,15 @@ class LeadService
         $request = $this->store(RequestKind::Application, 'APP', $data, $user, [
             'subject_line' => 'Application — '.$property->title,
             'message' => $data['message'],
-            'meta' => ['listing_type' => $property->listing_type->value],
+            'meta' => [
+                'listing_type' => $property->listing_type->value,
+                // Audit trail for the Terms and Conditions checkbox (validated as accepted).
+                'terms' => [
+                    'url' => config('amcom.legal.buyer_terms_url'),
+                    'accepted_at' => now()->toIso8601String(),
+                    'ip_address' => request()->ip(),
+                ],
+            ],
         ], $property);
 
         $this->notifier->email($request->email, 'application_received', [

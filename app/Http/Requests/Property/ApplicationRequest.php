@@ -14,7 +14,16 @@ class ApplicationRequest extends FormRequest
             'email' => ['required', 'string', 'email', 'max:255'],
             'phone' => Rules::phone(),
             'message' => ['required', 'string', 'min:5', 'max:3000'],
+            'accept_terms' => ['required', 'accepted'],
             'website' => ['prohibited'], // honeypot
+        ];
+    }
+
+    public function messages(): array
+    {
+        return [
+            'accept_terms.required' => 'Please confirm you have read and understood the Terms and Conditions.',
+            'accept_terms.accepted' => 'Please confirm you have read and understood the Terms and Conditions.',
         ];
     }
 }

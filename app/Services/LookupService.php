@@ -29,6 +29,7 @@ class LookupService
         return $static + [
             'banks' => $this->banks(),
             'property_locations' => $this->propertyLocations(),
+            'legal' => ['buyer_terms_url' => config('amcom.legal.buyer_terms_url')],
         ];
     }
 

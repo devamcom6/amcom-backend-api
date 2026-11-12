@@ -18,7 +18,7 @@ class ReferrerFieldsTest extends TestCase
     {
         return $this->postJson("/api/v1/properties/{$property->slug}/applications", $extra + [
             'full_name' => 'Ada Okafor', 'email' => 'ada@example.com', 'phone' => '+2348035550101',
-            'message' => "I'd like to know more about this apartment.",
+            'message' => "I'd like to know more about this apartment.", 'accept_terms' => true,
         ]);
     }
 
