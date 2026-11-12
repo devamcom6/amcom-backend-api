@@ -13,16 +13,20 @@ use Illuminate\Http\UploadedFile;
 use Throwable;
 
 /**
- * Uploads the design images in docs/images to Cloudinary and attaches them to estates and
- * properties that have none. Idempotent; requires Cloudinary credentials. Never runs in production.
+ * Uploads the demo images in database/seeders/images to Cloudinary and attaches them to estates
+ * and properties that have none. Idempotent; requires Cloudinary credentials. Never runs in production.
+ *
+ * The images live here (committed) rather than in docs/, which is git-ignored and so never deployed.
  *
  *   php artisan db:seed --class=DemoImageSeeder
  */
 class DemoImageSeeder extends Seeder
 {
+    private const DIRECTORY = 'database/seeders/images';
+
     private const IMAGES = [
-        'Aerial photo.png', 'Hero Image Container.png', 'CTA Image.png', 'Image Area.png',
-        'Image Area (1).png', 'Image Area (2).png', 'Image.png', 'Image (1).png',
+        'demo-1.png', 'demo-2.png', 'demo-3.png', 'demo-4.png',
+        'demo-5.png', 'demo-6.png', 'demo-7.png', 'demo-8.png',
     ];
 
     /** @var list<string> */
@@ -33,6 +37,8 @@ class DemoImageSeeder extends Seeder
     public function run(MediaService $media, CloudinaryService $cloudinary): void
     {
         if (app()->isProduction()) {
+            $this->command->warn('APP_ENV is production; skipping demo images.');
+
             return;
         }
 
@@ -42,10 +48,10 @@ class DemoImageSeeder extends Seeder
             return;
         }
 
-        $this->files = array_values(array_filter(array_map(fn ($f) => base_path('docs/images/'.$f), self::IMAGES), 'is_file'));
+        $this->files = array_values(array_filter(array_map(fn ($f) => base_path(self::DIRECTORY.'/'.$f), self::IMAGES), 'is_file'));
 
         if ($this->files === []) {
-            $this->command->warn('No images found in docs/images; skipping.');
+            $this->command->warn('No images found in '.self::DIRECTORY.'; skipping.');
 
             return;
         }

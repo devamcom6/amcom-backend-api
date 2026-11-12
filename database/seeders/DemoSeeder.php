@@ -40,7 +40,7 @@ use Illuminate\Support\Str;
 /**
  * Development/demo data mirroring the frontend mock accounts (handoff §1).
  * Never runs in production. Password for every demo account: SEED_PASSWORD (default Password123!).
- * Set SEED_UPLOAD_IMAGES=true with Cloudinary credentials to upload docs/images as real media
+ * Set SEED_UPLOAD_IMAGES=true with Cloudinary credentials to upload database/seeders/images as real media
  * (or run `php artisan db:seed --class=DemoImageSeeder` later).
  */
 class DemoSeeder extends Seeder
